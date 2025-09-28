@@ -1,0 +1,12 @@
+﻿{
+  "Id": "!ManyModsPerformanceFix",
+  "DisplayName": "Performance Fixes",
+  "Author": "",
+  "Version": "1.2.0",
+  "ManagerVersion": "0.27.11",
+  "Requirements": [],
+  "AssemblyName": "!ManyModsPerformanceFix.dll",
+  "EntryMethod": "ManyModsPerformanceFix.Main.Load",
+  "HomePage": "",
+  "Repository": ""
+}
