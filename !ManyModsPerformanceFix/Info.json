@@ -1,12 +1,12 @@
 ﻿{
   "Id": "!ManyModsPerformanceFix",
   "DisplayName": "Performance Fixes",
-  "Author": "",
-  "Version": "1.2.0",
+  "Author": "ADDB",
+  "Version": "1.3.0",
   "ManagerVersion": "0.27.11",
   "Requirements": [],
   "AssemblyName": "!ManyModsPerformanceFix.dll",
   "EntryMethod": "ManyModsPerformanceFix.Main.Load",
   "HomePage": "",
-  "Repository": ""
+  "Repository": "https://raw.githubusercontent.com/xADDBx/-ManyModsPerformanceFix/refs/heads/master/Repository.json"
 }
