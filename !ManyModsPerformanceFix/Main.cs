@@ -1,7 +1,9 @@
 ﻿using Core.Cheats;
 using HarmonyLib;
 using Kingmaker.Visual.Particles;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection.Emit;
 using UnityEngine;
 using UnityModManagerNet;
@@ -11,10 +13,11 @@ namespace ManyModsPerformanceFix;
 public static class Main {
     public static UnityModManager.ModEntry.ModLogger Log;
     public static Harmony HarmonyInstance;
+    public static UnityModManager.ModEntry ModEntry;
     public static bool Load(UnityModManager.ModEntry modEntry) {
         Log = modEntry.Logger;
         HarmonyInstance = new(modEntry.Info.Id);
-        Remove_NoOp_From_CheatsManagerInit();
+        ModEntry = modEntry;
         Apply_ManyModsLoad_PerformanceFix();
         Apply_SnapMapBase_UpdateRuntimeData_PerformanceFix();
         return true;
@@ -41,7 +44,13 @@ public static class Main {
         }
     }
     private static void Apply_ManyModsLoad_PerformanceFix() {
-        _ = CheatsManagerHolder.Instance;
+        try {
+            _ = CheatsCache.Instance;
+        } catch (Exception ex) {
+            Log.Log($"Encountered issue while using CheatsCache, falling back to normal init.\n{ex}");
+            Remove_NoOp_From_CheatsManagerInit();
+            _ = CheatsManagerHolder.Instance;
+        }
     }
     private static void Apply_SnapMapBase_UpdateRuntimeData_PerformanceFix() {
         var target = AccessTools.Method(typeof(SnapMapBase), nameof(SnapMapBase.UpdateRuntimeData));

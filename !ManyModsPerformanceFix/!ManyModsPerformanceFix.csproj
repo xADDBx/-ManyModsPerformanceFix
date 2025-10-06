@@ -5,9 +5,9 @@
 		<TargetFramework>net481</TargetFramework>
 		<AssemblyName>!ManyModsPerformanceFix</AssemblyName>
 		<Description>Many Mods Load Performance Fix</Description>
-		<Version>1.3.0</Version>
+		<Version>1.4.0</Version>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-		<LangVersion>latest</LangVersion>
+		<LangVersion>preview</LangVersion>
 		<RootNamespace>ManyModsPerformanceFix</RootNamespace>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
 		<RestoreAdditionalProjectSources>https://api.nuget.org/v3/index.json</RestoreAdditionalProjectSources>
