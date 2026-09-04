@@ -5,7 +5,7 @@
 		<TargetFramework>net481</TargetFramework>
 		<AssemblyName>!ManyModsPerformanceFix</AssemblyName>
 		<Description>Many Mods Load Performance Fix</Description>
-		<Version>1.4.0</Version>
+		<Version>1.7.1</Version>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<LangVersion>preview</LangVersion>
 		<RootNamespace>ManyModsPerformanceFix</RootNamespace>
