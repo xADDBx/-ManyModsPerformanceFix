@@ -17,11 +17,20 @@ public static class Main {
         Log = modEntry.Logger;
         HarmonyInstance = new(modEntry.Info.Id);
         ModEntry = modEntry;
+        // Reuse assembly type lists.
         AssemblyTypesCache.Enable();
-        PatchAllCache.Enable();
-        UmmReloadCache.Enable();
-        WrathPatchesBinderCache.Enable();
+        // Batch startup Harmony wrapper updates.
         DeferredWrapperUpdates.Enable();
+        // Cache Harmony patch discovery.
+        PatchAllCache.Enable();
+        // Cache UMM reload checks.
+        UmmReloadCache.Enable();
+        // Cache TypeId discovery.
+        WrathPatchesBinderCache.Enable();
+        // Cache update and volume types.
+        RuntimeTypeDiscoveryCache.Enable();
+        // Reuse localization tags and packs.
+        LocalizationTagCache.Enable();
         Apply_ManyModsLoad_PerformanceFix();
         Apply_SnapMapBase_UpdateRuntimeData_PerformanceFix();
         return true;

@@ -1,14 +1,11 @@
 using HarmonyLib;
 using Kingmaker.Blueprints.JsonSystem;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
-using System.Threading;
 using UnityModManagerNet;
 
 namespace ManyModsPerformanceFix;
@@ -32,12 +29,7 @@ internal static class WrathPatchesBinderCache {
     private static CacheData m_Cache;
     private static string m_CachePath;
     private static Guid m_OwnerMvid;
-    private static int m_Dirty;
-    private static int m_Hits;
-    private static int m_Misses;
-    private static int m_RestoredTypes;
-    private static int m_SkippedTypes;
-    private static int m_Reported;
+    private static bool m_Dirty;
     private static bool m_ScannerPatched;
     private static bool m_TranspilerApplied;
 
@@ -82,18 +74,14 @@ internal static class WrathPatchesBinderCache {
                 var type = assembly.GetType(m_ScannerTypeName, false);
                 var scanner = AccessTools.Method(type, "Prefix", Type.EmptyTypes);
                 var transpiler = AccessTools.Method(typeof(WrathPatchesBinderCache), nameof(ScannerTranspiler));
-                var measure = AccessTools.Method(typeof(WrathPatchesBinderCache), nameof(Measure));
-                var report = AccessTools.Method(typeof(WrathPatchesBinderCache), nameof(Report));
-                if (scanner == null || transpiler == null || measure == null || report == null) {
+                var save = AccessTools.Method(typeof(WrathPatchesBinderCache), nameof(SaveCache));
+                if (scanner == null || transpiler == null || save == null) {
                     throw new MissingMemberException("The WrathPatches binder scanner is not supported.");
                 }
 
                 m_OwnerMvid = assembly.ManifestModule.ModuleVersionId;
                 Main.HarmonyInstance.Patch(scanner,
-                    prefix: new(measure) {
-                        priority = Priority.First
-                    },
-                    postfix: new(report) {
+                    postfix: new(save) {
                         priority = Priority.Last
                     },
                     transpiler: new(transpiler) {
@@ -126,20 +114,8 @@ internal static class WrathPatchesBinderCache {
     }
 
     private static Type[] GetTypeIdTypes(Assembly assembly) {
-        if (assembly == null || assembly.IsDynamic || m_Cache == null) {
+        if (m_Cache == null || !AssemblyCacheKey.TryCreate(assembly, m_OwnerMvid, out var module, out var key)) {
             return assembly?.GetTypes() ?? Type.EmptyTypes;
-        }
-
-        Module module;
-        string key;
-        try {
-            if (assembly.GetModules().Length != 1) {
-                return assembly.GetTypes();
-            }
-            module = assembly.ManifestModule;
-            key = AssemblyCacheKey.Create(assembly, module, m_OwnerMvid);
-        } catch {
-            return assembly.GetTypes();
         }
 
         CacheEntry entry;
@@ -147,9 +123,6 @@ internal static class WrathPatchesBinderCache {
             m_Cache.Entries.TryGetValue(key, out entry);
         }
         if (entry != null && TryRestore(assembly, module, entry, out var restored)) {
-            Interlocked.Increment(ref m_Hits);
-            Interlocked.Add(ref m_RestoredTypes, restored.Length);
-            Interlocked.Add(ref m_SkippedTypes, entry.TotalTypes - restored.Length);
             return restored;
         }
 
@@ -157,7 +130,7 @@ internal static class WrathPatchesBinderCache {
         var typeIdTypes = new List<Type>();
         try {
             foreach (var type in allTypes) {
-                if (HasTypeId(type)) {
+                if (type.IsDefined(typeof(TypeIdAttribute), false)) {
                     _ = type.MetadataToken;
                     typeIdTypes.Add(type);
                 }
@@ -171,19 +144,10 @@ internal static class WrathPatchesBinderCache {
                 TotalTypes = allTypes.Length,
                 TypeTokens = typeIdTypes.Select(type => type.MetadataToken).ToArray()
             };
-            m_Dirty = 1;
+            m_Dirty = true;
         }
-        Interlocked.Increment(ref m_Misses);
-        return typeIdTypes.ToArray();
-    }
 
-    private static bool HasTypeId(Type type) {
-        foreach (var attribute in CustomAttributeData.GetCustomAttributes(type)) {
-            if (typeof(TypeIdAttribute).IsAssignableFrom(attribute.AttributeType)) {
-                return true;
-            }
-        }
-        return false;
+        return typeIdTypes.ToArray();
     }
 
     private static bool TryRestore(Assembly assembly, Module module, CacheEntry entry, out Type[] types) {
@@ -216,7 +180,7 @@ internal static class WrathPatchesBinderCache {
             if (!File.Exists(m_CachePath)) {
                 return new CacheData();
             }
-            var cache = JsonConvert.DeserializeObject<CacheData>(File.ReadAllText(m_CachePath));
+            var cache = CacheFile.Read<CacheData>(m_CachePath);
             if (cache?.Version == m_CacheVersion && cache.Entries != null) {
                 return cache;
             }
@@ -227,34 +191,16 @@ internal static class WrathPatchesBinderCache {
     }
 
     private static void SaveCache() {
-        try {
-            CacheData cache;
-            lock (m_Sync) {
-                if (m_Dirty == 0) {
-                    return;
-                }
-                m_Dirty = 0;
-                cache = m_Cache;
+        lock (m_Sync) {
+            if (!m_Dirty) {
+                return;
             }
-            File.WriteAllText(m_CachePath, JsonConvert.SerializeObject(cache));
-        } catch (Exception ex) {
-            Interlocked.Exchange(ref m_Dirty, 1);
-            Main.Log.Log($"Could not write the WrathPatches binder cache.\n{ex}");
-        }
-    }
-
-    private static void Measure(out long __state) {
-        __state = Stopwatch.GetTimestamp();
-    }
-
-    private static void Report(long __state) {
-        if (Interlocked.Exchange(ref m_Reported, 1) != 0) {
-            return;
-        }
-        SaveCache();
-        if (m_Hits + m_Misses != 0) {
-            var milliseconds = (Stopwatch.GetTimestamp() - __state) * 1000 / Stopwatch.Frequency;
-            Main.Log.Log($"WrathPatches binder cache: {m_Hits} hit(s), {m_Misses} miss(es), restored {m_RestoredTypes} TypeId type(s), skipped {m_SkippedTypes} type check(s) in {milliseconds} ms.");
+            try {
+                CacheFile.Write(m_CachePath, m_Cache);
+                m_Dirty = false;
+            } catch (Exception ex) {
+                Main.Log.Log($"Could not write the WrathPatches binder cache.\n{ex}");
+            }
         }
     }
 }

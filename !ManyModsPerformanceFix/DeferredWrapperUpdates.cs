@@ -4,7 +4,6 @@ using Kingmaker.Localization;
 using Kingmaker.Modding;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Reflection;
 
 namespace ManyModsPerformanceFix;
@@ -14,7 +13,6 @@ internal static class DeferredWrapperUpdates {
         internal readonly MethodBase Original;
         internal MethodInfo ActiveReplacement;
         internal bool Dirty;
-        internal int SkippedUpdates;
 
         internal DeferredMethod(MethodBase original) {
             Original = original;
@@ -74,7 +72,6 @@ internal static class DeferredWrapperUpdates {
         }
 
         method.Dirty = true;
-        method.SkippedUpdates++;
         __result = method.ActiveReplacement;
         return false;
     }
@@ -95,13 +92,9 @@ internal static class DeferredWrapperUpdates {
                 return;
             }
 
-            var timer = Stopwatch.StartNew();
-            var compiled = 0;
-            var skipped = 0;
             m_Flushing = true;
             try {
                 foreach (var method in m_Methods.Values) {
-                    skipped += method.SkippedUpdates;
                     if (!method.Dirty) {
                         continue;
                     }
@@ -111,13 +104,9 @@ internal static class DeferredWrapperUpdates {
                     m_UpdatePatchInfo.Invoke(null, [method.Original, replacement, patchInfo]);
                     method.ActiveReplacement = replacement;
                     method.Dirty = false;
-                    compiled++;
                 }
 
                 m_Enabled = false;
-                if (skipped > 0) {
-                    Main.Log.Log($"Deferred {skipped} Harmony wrapper updates and compiled {compiled} final wrapper(s) in {timer.ElapsedMilliseconds} ms.");
-                }
             } catch (Exception ex) {
                 m_Enabled = false;
                 Main.Log.Log($"Failed to compile deferred Harmony wrappers.\n{ex}");

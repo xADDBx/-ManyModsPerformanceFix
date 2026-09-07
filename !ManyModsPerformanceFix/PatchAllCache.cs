@@ -1,6 +1,5 @@
 using HarmonyLib;
 using Kingmaker.Blueprints.JsonSystem;
-using Newtonsoft.Json;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -8,12 +7,11 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
-using System.Threading;
 
 namespace ManyModsPerformanceFix;
 
 internal static class PatchAllCache {
-    private const int m_CacheVersion = 4;
+    private const int m_CacheVersion = 5;
 
     private class CacheData {
         public int Version = m_CacheVersion;
@@ -73,21 +71,9 @@ internal static class PatchAllCache {
     }
 
     private class ModuleResolver {
-        private readonly Dictionary<Guid, Module> m_Modules = [];
-
-        internal ModuleResolver() {
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
-                Module[] modules;
-                try {
-                    modules = assembly.GetModules();
-                } catch {
-                    continue;
-                }
-                foreach (var module in modules) {
-                    m_Modules[module.ModuleVersionId] = module;
-                }
-            }
-        }
+        private readonly Dictionary<Guid, Module> m_Modules = AssemblyCacheKey.GetModules();
+        internal readonly Dictionary<(Guid, int), Type> Types = [];
+        internal readonly Dictionary<(Guid, int), MethodInfo> Methods = [];
 
         internal bool TryGet(Guid module, out Module result) {
             return m_Modules.TryGetValue(module, out result);
@@ -104,6 +90,7 @@ internal static class PatchAllCache {
     ];
 
     private static Type m_AttributePatchType;
+    private static Type m_PatchListType;
     private static FieldInfo m_ProcessorInstance;
     private static FieldInfo m_ProcessorContainerType;
     private static FieldInfo m_ProcessorContainerAttributes;
@@ -114,13 +101,7 @@ internal static class PatchAllCache {
     private static FieldInfo m_AttributePatchKind;
     private static CacheData m_Cache;
     private static string m_CachePath;
-    private static int m_Dirty;
-    private static int m_Hits;
-    private static int m_Misses;
-    private static int m_RestoredClasses;
-    private static int m_ReflectedClasses;
-    private static int m_SkippedTypes;
-    private static int m_Reported;
+    private static bool m_Dirty;
 
     internal static void Enable() {
         try {
@@ -131,12 +112,12 @@ internal static class PatchAllCache {
             var patchAll = AccessTools.Method(typeof(Harmony), nameof(Harmony.PatchAll), [typeof(Assembly)]);
             var prefix = AccessTools.Method(typeof(PatchAllCache), nameof(PatchAllPrefix));
             var loadPackToc = AccessTools.Method(typeof(StartGameLoader), nameof(StartGameLoader.LoadPackTOC));
-            var report = AccessTools.Method(typeof(PatchAllCache), nameof(Report));
-            if (patchAll == null || prefix == null || loadPackToc == null || report == null) {
+            var save = AccessTools.Method(typeof(PatchAllCache), nameof(SaveCache));
+            if (patchAll == null || prefix == null || loadPackToc == null || save == null) {
                 throw new MissingMemberException("Could not resolve the Harmony PatchAll cache methods.");
             }
 
-            Main.HarmonyInstance.Patch(loadPackToc, prefix: new(report) {
+            Main.HarmonyInstance.Patch(loadPackToc, prefix: new(save) {
                 priority = Priority.Last
             });
             Main.HarmonyInstance.Patch(patchAll, prefix: new(prefix) {
@@ -152,6 +133,7 @@ internal static class PatchAllCache {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         var processorType = typeof(PatchClassProcessor);
         m_AttributePatchType = typeof(Harmony).Assembly.GetType("HarmonyLib.AttributePatch", true);
+        m_PatchListType = typeof(List<>).MakeGenericType(m_AttributePatchType);
         m_ProcessorInstance = processorType.GetField("instance", flags);
         m_ProcessorContainerType = processorType.GetField("containerType", flags);
         m_ProcessorContainerAttributes = processorType.GetField("containerAttributes", flags);
@@ -168,32 +150,18 @@ internal static class PatchAllCache {
     }
 
     private static bool PatchAllPrefix(Harmony __instance, Assembly assembly) {
-        if (assembly == null || assembly.IsDynamic || m_Cache == null) {
+        if (m_Cache == null || !AssemblyCacheKey.TryCreate(assembly, m_HarmonyMvid, out var module, out var key)) {
             return true;
         }
 
-        Module module;
-        string key;
-        try {
-            if (assembly.GetModules().Length != 1) {
-                return true;
-            }
-            module = assembly.ManifestModule;
-            key = AssemblyCacheKey.Create(assembly, module, m_HarmonyMvid);
-        } catch {
-            return true;
-        }
         CacheEntry entry;
         lock (m_Sync) {
             m_Cache.Entries.TryGetValue(key, out entry);
         }
 
-        if (entry != null && TryRestoreProcessors(__instance, assembly, module, entry, out var processors, out var restored)) {
-            Interlocked.Increment(ref m_Hits);
-            Interlocked.Add(ref m_RestoredClasses, restored);
-            Interlocked.Add(ref m_ReflectedClasses, processors.Length - restored);
-            Interlocked.Add(ref m_SkippedTypes, entry.TotalTypes - processors.Length);
-            foreach (var processor in processors) {
+        if (entry != null && TryRestoreProcessors(__instance, assembly, module, entry, out var processors)) {
+            for (var i = 0; i < processors.Length; i++) {
+                var processor = processors[i] ?? __instance.CreateClassProcessor(module.ResolveType(entry.PatchClasses[i].TypeToken));
                 processor.Patch();
             }
             return false;
@@ -201,7 +169,7 @@ internal static class PatchAllCache {
 
         Type[] types;
         try {
-            types = AccessTools.GetTypesFromAssembly(assembly).ToArray();
+            types = AccessTools.GetTypesFromAssembly(assembly);
         } catch {
             return true;
         }
@@ -213,7 +181,6 @@ internal static class PatchAllCache {
             }
 
             var processor = __instance.CreateClassProcessor(type);
-            processor.Patch();
 
             PatchClassData data = null;
             try {
@@ -221,16 +188,15 @@ internal static class PatchAllCache {
             } catch {
             }
             patchClasses.Add(data ?? new PatchClassData { TypeToken = type.MetadataToken });
+            processor.Patch();
         }
 
-        Interlocked.Increment(ref m_Misses);
-        Interlocked.Add(ref m_ReflectedClasses, patchClasses.Count);
         lock (m_Sync) {
             m_Cache.Entries[key] = new CacheEntry {
                 TotalTypes = types.Length,
                 PatchClasses = patchClasses.ToArray()
             };
-            m_Dirty = 1;
+            m_Dirty = true;
         }
         return false;
     }
@@ -311,16 +277,15 @@ internal static class PatchAllCache {
     }
 
     private static bool TryRestoreProcessors(Harmony harmony, Assembly assembly, Module module, CacheEntry entry,
-        out PatchClassProcessor[] processors, out int restored) {
+        out PatchClassProcessor[] processors) {
         processors = null;
-        restored = 0;
         if (entry.PatchClasses == null || entry.TotalTypes < entry.PatchClasses.Length) {
             return false;
         }
 
-        var resolver = new ModuleResolver();
         var result = new PatchClassProcessor[entry.PatchClasses.Length];
         try {
+            ModuleResolver resolver = null;
             for (int i = 0; i < result.Length; i++) {
                 var data = entry.PatchClasses[i];
                 var containerType = module.ResolveType(data.TypeToken);
@@ -329,10 +294,10 @@ internal static class PatchAllCache {
                 }
 
                 if (data.Container == null) {
-                    result[i] = harmony.CreateClassProcessor(containerType);
-                } else if (TryRestoreProcessor(harmony, containerType, data, resolver, out result[i])) {
-                    restored++;
-                } else {
+                    continue;
+                }
+                resolver ??= new ModuleResolver();
+                if (!TryRestoreProcessor(harmony, containerType, data, resolver, out result[i])) {
                     return false;
                 }
             }
@@ -361,8 +326,7 @@ internal static class PatchAllCache {
             auxiliary[m_AuxiliaryTypes[item.Kind]] = method;
         }
 
-        var listType = typeof(List<>).MakeGenericType(m_AttributePatchType);
-        var patchMethods = (IList)Activator.CreateInstance(listType);
+        var patchMethods = (IList)Activator.CreateInstance(m_PatchListType);
         foreach (var item in data.PatchMethods) {
             if (item.Type.HasValue && !Enum.IsDefined(typeof(HarmonyPatchType), item.Type.Value)) {
                 return false;
@@ -416,8 +380,8 @@ internal static class PatchAllCache {
             MethodType = method.methodType.HasValue ? (int?)method.methodType.Value : null,
             ArgumentTypes = argumentTypes,
             Priority = method.priority,
-            Before = method.before,
-            After = method.after,
+            Before = method.before == null ? null : (string[])method.before.Clone(),
+            After = method.after == null ? null : (string[])method.after.Clone(),
             ReversePatchType = method.reversePatchType.HasValue ? (int?)method.reversePatchType.Value : null,
             Debug = method.debug,
             NonVirtualDelegate = method.nonVirtualDelegate
@@ -457,8 +421,8 @@ internal static class PatchAllCache {
             methodType = data.MethodType.HasValue ? (MethodType?)data.MethodType.Value : null,
             argumentTypes = argumentTypes,
             priority = data.Priority,
-            before = data.Before,
-            after = data.After,
+            before = data.Before == null ? null : (string[])data.Before.Clone(),
+            after = data.After == null ? null : (string[])data.After.Clone(),
             reversePatchType = data.ReversePatchType.HasValue ? (HarmonyReversePatchType?)data.ReversePatchType.Value : null,
             debug = data.Debug,
             nonVirtualDelegate = data.NonVirtualDelegate
@@ -470,7 +434,8 @@ internal static class PatchAllCache {
         if (method == null) {
             return null;
         }
-        if (method.IsGenericMethod && !method.IsGenericMethodDefinition) {
+        if (method.IsGenericMethod && !method.IsGenericMethodDefinition
+            || method.DeclaringType?.IsGenericType == true && !method.DeclaringType.IsGenericTypeDefinition) {
             return null;
         }
         try {
@@ -489,7 +454,13 @@ internal static class PatchAllCache {
             return false;
         }
         try {
+            if (resolver.Methods.TryGetValue((data.Module, data.Token), out method)) {
+                return true;
+            }
             method = module.ResolveMethod(data.Token) as MethodInfo;
+            if (method != null) {
+                resolver.Methods[(data.Module, data.Token)] = method;
+            }
             return method != null;
         } catch {
             return false;
@@ -590,7 +561,13 @@ internal static class PatchAllCache {
             return false;
         }
         try {
+            if (resolver.Types.TryGetValue((data.Module, data.Token), out type)) {
+                return true;
+            }
             type = module.ResolveType(data.Token);
+            if (type != null) {
+                resolver.Types[(data.Module, data.Token)] = type;
+            }
             return type != null;
         } catch {
             return false;
@@ -602,7 +579,7 @@ internal static class PatchAllCache {
             if (!File.Exists(m_CachePath)) {
                 return new CacheData();
             }
-            var cache = JsonConvert.DeserializeObject<CacheData>(File.ReadAllText(m_CachePath));
+            var cache = CacheFile.Read<CacheData>(m_CachePath);
             if (cache?.Version == m_CacheVersion && cache.Entries != null) {
                 return cache;
             }
@@ -613,29 +590,16 @@ internal static class PatchAllCache {
     }
 
     private static void SaveCache() {
-        try {
-            CacheData cache;
-            lock (m_Sync) {
-                if (m_Dirty == 0) {
-                    return;
-                }
-                m_Dirty = 0;
-                cache = m_Cache;
+        lock (m_Sync) {
+            if (!m_Dirty) {
+                return;
             }
-            File.WriteAllText(m_CachePath, JsonConvert.SerializeObject(cache));
-        } catch (Exception ex) {
-            Interlocked.Exchange(ref m_Dirty, 1);
-            Main.Log.Log($"Could not write the Harmony PatchAll cache.\n{ex}");
-        }
-    }
-
-    private static void Report() {
-        if (Interlocked.Exchange(ref m_Reported, 1) != 0) {
-            return;
-        }
-        SaveCache();
-        if (m_Hits + m_Misses != 0) {
-            Main.Log.Log($"PatchAll cache: {m_Hits} hit(s), {m_Misses} miss(es), restored {m_RestoredClasses} patch class(es), reflected {m_ReflectedClasses}, skipped {m_SkippedTypes} non-patch type scans.");
+            try {
+                CacheFile.Write(m_CachePath, m_Cache);
+                m_Dirty = false;
+            } catch (Exception ex) {
+                Main.Log.Log($"Could not write the Harmony PatchAll cache.\n{ex}");
+            }
         }
     }
 }
