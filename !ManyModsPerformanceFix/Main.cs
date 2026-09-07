@@ -33,6 +33,8 @@ public static class Main {
         LocalizationTagCache.Enable();
         Apply_ManyModsLoad_PerformanceFix();
         Apply_SnapMapBase_UpdateRuntimeData_PerformanceFix();
+        // Install the load-order helper.
+        FirstStartInstaller.Install();
         return true;
     }
     private static void Remove_NoOp_From_CheatsManagerInit() {

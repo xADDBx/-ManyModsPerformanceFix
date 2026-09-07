@@ -26,6 +26,8 @@
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Info.json" CopyToOutputDirectory="PreserveNewest" />
+		<ProjectReference Include="..\FirstStart\FirstStart.csproj" ReferenceOutputAssembly="false" />
+		<EmbeddedResource Include="..\FirstStart\bin\$(Configuration)\FirstStart.dll" LogicalName="FirstStart.dll" />
 	</ItemGroup>
 	<Target Name="Deploy" AfterTargets="Build">
 		<ItemGroup>
