@@ -1,5 +1,6 @@
 using HarmonyLib;
 using Owlcat.Runtime.Core.Updatables;
+using Pathfinding;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using UnityEngine.Rendering;
+using Path = System.IO.Path;
 
 namespace ManyModsPerformanceFix;
 
@@ -17,6 +19,7 @@ internal static class RuntimeTypeDiscoveryCache {
         public int Version = m_CacheVersion;
         public Dictionary<string, CacheEntry> Updates = [];
         public Dictionary<string, CacheEntry> Volumes = [];
+        public Dictionary<string, int[]> Graphs = [];
     }
 
     private class CacheEntry {
@@ -29,6 +32,7 @@ internal static class RuntimeTypeDiscoveryCache {
         public Type[] Updatable;
         public Type[] LateUpdatable;
         public Type[] Volumes;
+        public Type[] Graphs;
     }
 
     private static readonly object m_Sync = new();
@@ -44,16 +48,19 @@ internal static class RuntimeTypeDiscoveryCache {
 
             var updateCaller = AccessTools.Method(typeof(UpdateCaller), "OnAfterFirstSceneLoaded");
             var reloadBaseTypes = AccessTools.Method(typeof(VolumeManager), "ReloadBaseTypes");
+            var findGraphTypes = AccessTools.Method(typeof(AstarData), nameof(AstarData.FindGraphTypes));
             var updateTranspiler = AccessTools.Method(typeof(RuntimeTypeDiscoveryCache), nameof(UpdateTranspiler));
             var volumeTranspiler = AccessTools.Method(typeof(RuntimeTypeDiscoveryCache), nameof(VolumeTranspiler));
+            var graphTranspiler = AccessTools.Method(typeof(RuntimeTypeDiscoveryCache), nameof(GraphTranspiler));
             var save = AccessTools.Method(typeof(RuntimeTypeDiscoveryCache), nameof(Save));
             if (updateCaller == null || reloadBaseTypes == null || updateTranspiler == null
-                || volumeTranspiler == null || save == null) {
+                || volumeTranspiler == null || findGraphTypes == null || graphTranspiler == null || save == null) {
                 throw new MissingMemberException("Could not resolve the runtime type discovery methods.");
             }
 
             Main.HarmonyInstance.Patch(updateCaller, postfix: new(save), transpiler: new(updateTranspiler));
             Main.HarmonyInstance.Patch(reloadBaseTypes, postfix: new(save), transpiler: new(volumeTranspiler));
+            Main.HarmonyInstance.Patch(findGraphTypes, postfix: new(save), transpiler: new(graphTranspiler));
         } catch (Exception ex) {
             m_Cache = null;
             Main.Log.Log($"Could not enable the runtime type discovery cache.\n{ex}");
@@ -99,6 +106,50 @@ internal static class RuntimeTypeDiscoveryCache {
         }
         var arguments = method.GetGenericArguments();
         return arguments.Length == 1 && arguments[0] == typeof(VolumeComponent);
+    }
+
+    private static IEnumerable<CodeInstruction> GraphTranspiler(IEnumerable<CodeInstruction> instructions) {
+        var result = instructions.ToList();
+        var getTypes = AccessTools.Method(typeof(Assembly), nameof(Assembly.GetTypes), Type.EmptyTypes);
+        var calls = result.Where(instruction => instruction.Calls(getTypes)).ToList();
+        if (calls.Count != 1) {
+            Main.Log.Log("Runtime type discovery cache: AstarData layout is not supported.");
+            return result;
+        }
+
+        calls[0].opcode = OpCodes.Call;
+        calls[0].operand = AccessTools.Method(typeof(RuntimeTypeDiscoveryCache), nameof(GetGraphTypes));
+        return result;
+    }
+
+    private static Type[] GetGraphTypes(Assembly assembly) {
+        if (m_Cache == null || !AssemblyTypesCache.CanCache(assembly)) {
+            return assembly.GetTypes();
+        }
+        lock (m_Sync) {
+            if (m_Runtime.TryGetValue(assembly, out var runtime) && runtime.Graphs != null) {
+                return runtime.Graphs;
+            }
+
+            runtime ??= new RuntimeEntry();
+            var canStore = AssemblyCacheKey.TryCreate(assembly,
+                typeof(NavGraph).Module.ModuleVersionId, out var module, out var key);
+            if (!canStore || !m_Cache.Graphs.TryGetValue(key, out var tokens)
+                || !TryResolveTypes(module, tokens, IsGraph, out runtime.Graphs)) {
+                runtime.Graphs = assembly.GetTypes().Where(IsGraph).ToArray();
+                if (canStore && AssemblyCacheKey.TryCreate(assembly, typeof(NavGraph).Module.ModuleVersionId, out _, out key)) {
+                    m_Cache.Graphs[key] = runtime.Graphs.Select(type => type.MetadataToken).ToArray();
+                    m_Dirty = true;
+                }
+            }
+
+            m_Runtime[assembly] = runtime;
+            return runtime.Graphs;
+        }
+    }
+
+    private static bool IsGraph(Type type) {
+        return type.IsSubclassOf(typeof(NavGraph));
     }
 
     private static Type[] GetUpdatableTypes(Assembly assembly) {
@@ -288,6 +339,7 @@ internal static class RuntimeTypeDiscoveryCache {
             }
             var cache = CacheFile.Read<CacheData>(m_CachePath);
             if (cache?.Version == m_CacheVersion && cache.Updates != null && cache.Volumes != null) {
+                cache.Graphs ??= [];
                 return cache;
             }
         } catch (Exception ex) {

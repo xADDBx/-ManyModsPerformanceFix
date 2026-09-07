@@ -27,7 +27,7 @@ public static class Main {
         UmmReloadCache.Enable();
         // Cache TypeId discovery.
         WrathPatchesBinderCache.Enable();
-        // Cache update and volume types.
+        // Cache update, volume and graph types.
         RuntimeTypeDiscoveryCache.Enable();
         // Reuse localization tags and packs.
         LocalizationTagCache.Enable();

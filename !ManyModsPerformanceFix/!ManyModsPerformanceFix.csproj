@@ -5,7 +5,7 @@
 		<TargetFramework>net481</TargetFramework>
 		<AssemblyName>!ManyModsPerformanceFix</AssemblyName>
 		<Description>Many Mods Load Performance Fix</Description>
-		<Version>1.8.2</Version>
+		<Version>1.8.3</Version>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<LangVersion>preview</LangVersion>
 		<RootNamespace>ManyModsPerformanceFix</RootNamespace>
@@ -22,6 +22,7 @@
 		<Reference Include="$(WrathInstallDir)\Wrath_Data\Managed\UnityModManager\UnityModManager.dll*" Publicize="true" Private="false" />
 		<Reference Include="$(WrathInstallDir)\Wrath_Data\Managed\Newtonsoft.Json.dll*" Private="false" />
 		<Reference Include="$(WrathInstallDir)\Wrath_Data\Managed\UniRx.dll*" Private="false" />
+		<Reference Include="$(WrathInstallDir)\Wrath_Data\Managed\AstarPathfindingProject.dll" Private="false" />
 		<Reference Include="$(WrathInstallDir)\Wrath_Data\Managed\0Harmony.dll*" Publicize="true" Private="false" />
 	</ItemGroup>
 	<ItemGroup>
