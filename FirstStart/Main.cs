@@ -15,7 +15,7 @@ public static class Main {
             foreach (var file in Directory.GetFiles(modEntry.Path, "FirstStart.dll*")) {
                 File.Delete(file);
             }
-            // Other mods still scan this directory during startup.
+            // Other mods still scan this directory during startup :(
         } catch (Exception ex) {
             modEntry.Logger.Log($"Could not remove FirstStart files: {ex.Message}");
         }
