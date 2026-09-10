@@ -97,6 +97,7 @@ internal static class PatchAllCache {
     private static FieldInfo m_ProcessorAuxiliaryMethods;
     private static FieldInfo m_ProcessorPatchMethods;
     private static PropertyInfo m_ProcessorCategory;
+    private static FieldInfo m_MethodCategory;
     private static FieldInfo m_AttributePatchInfo;
     private static FieldInfo m_AttributePatchKind;
     private static CacheData m_Cache;
@@ -140,10 +141,11 @@ internal static class PatchAllCache {
         m_ProcessorAuxiliaryMethods = processorType.GetField("auxilaryMethods", flags);
         m_ProcessorPatchMethods = processorType.GetField("patchMethods", flags);
         m_ProcessorCategory = processorType.GetProperty("Category", flags);
+        m_MethodCategory = typeof(HarmonyMethod).GetField("category", flags);
         m_AttributePatchInfo = m_AttributePatchType.GetField("info", flags);
         m_AttributePatchKind = m_AttributePatchType.GetField("type", flags);
         if (m_ProcessorInstance == null || m_ProcessorContainerType == null || m_ProcessorContainerAttributes == null
-            || m_ProcessorAuxiliaryMethods == null || m_ProcessorPatchMethods == null || m_ProcessorCategory == null
+            || m_ProcessorAuxiliaryMethods == null || m_ProcessorPatchMethods == null
             || m_AttributePatchInfo == null || m_AttributePatchKind == null) {
             throw new MissingMemberException("Harmony's patch class processor layout is not supported.");
         }
@@ -346,7 +348,7 @@ internal static class PatchAllCache {
         m_ProcessorContainerAttributes.SetValue(restored, container);
         m_ProcessorAuxiliaryMethods.SetValue(restored, auxiliary);
         m_ProcessorPatchMethods.SetValue(restored, patchMethods);
-        m_ProcessorCategory.SetValue(restored, container.category);
+        m_ProcessorCategory?.SetValue(restored, data.Container.Category);
         processor = restored;
         return true;
     }
@@ -374,7 +376,7 @@ internal static class PatchAllCache {
         }
         return new HarmonyMethodData {
             Method = patchMethod,
-            Category = method.category,
+            Category = (string)m_MethodCategory?.GetValue(method),
             DeclaringType = declaringType,
             MethodName = method.methodName,
             MethodType = method.methodType.HasValue ? (int?)method.methodType.Value : null,
@@ -415,7 +417,6 @@ internal static class PatchAllCache {
 
         method = new HarmonyMethod {
             method = patchMethod,
-            category = data.Category,
             declaringType = declaringType,
             methodName = data.MethodName,
             methodType = data.MethodType.HasValue ? (MethodType?)data.MethodType.Value : null,
@@ -427,6 +428,7 @@ internal static class PatchAllCache {
             debug = data.Debug,
             nonVirtualDelegate = data.NonVirtualDelegate
         };
+        m_MethodCategory?.SetValue(method, data.Category);
         return true;
     }
 
