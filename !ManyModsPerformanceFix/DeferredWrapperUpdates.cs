@@ -101,7 +101,8 @@ internal static class DeferredWrapperUpdates {
 
                     var patchInfo = m_GetPatchInfo.Invoke(null, [method.Original]);
                     var replacement = (MethodInfo)m_UpdateWrapper.Invoke(null, [method.Original, patchInfo]);
-                    m_UpdatePatchInfo.Invoke(null, [method.Original, replacement, patchInfo]);
+                    m_UpdatePatchInfo.Invoke(null, m_UpdatePatchInfo.GetParameters().Length == 2
+                        ? [method.Original, patchInfo] : [method.Original, replacement, patchInfo]);
                     method.ActiveReplacement = replacement;
                     method.Dirty = false;
                 }
